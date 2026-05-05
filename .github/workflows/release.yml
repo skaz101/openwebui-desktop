@@ -33,25 +33,14 @@ jobs:
                   retention-days: 1
 
     package:
-        name: Package (${{ matrix.os }}-${{ matrix.arch }})
+        name: Package Windows MSI (${{ matrix.arch }})
         needs: compile
-        runs-on: ${{ matrix.os }}
+        runs-on: windows-latest
         strategy:
             fail-fast: false
             matrix:
                 include:
-                    - os: ubuntu-latest
-                      arch: x64
-                    - os: ubuntu-24.04-arm
-                      arch: arm64
-                    - os: windows-latest
-                      arch: x64
-                    - os: windows-11-arm
-                      arch: arm64
-                    - os: macos-latest
-                      arch: x64
-                    - os: macos-latest
-                      arch: arm64
+                    - arch: x64
         steps:
             - name: Checkout Repository
               uses: actions/checkout@v4
@@ -71,101 +60,12 @@ jobs:
                   name: compiled-output
                   path: out/
 
-            # ── Flatpak setup (Linux x64 only) ──
-            - name: Cache Flatpak SDKs
-              if: runner.os == 'Linux' && matrix.arch == 'x64'
-              uses: actions/cache@v4
-              with:
-                  path: ~/.local/share/flatpak
-                  key: flatpak-sdk-23.08-electron2-${{ runner.os }}
-
-            - name: Install Flatpak build tools
-              id: flatpak
-              if: runner.os == 'Linux' && matrix.arch == 'x64'
-              continue-on-error: true
-              run: |
-                  sudo apt-get update
-                  sudo apt-get install -y flatpak flatpak-builder
-                  flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
-                  flatpak install --user -y flathub org.freedesktop.Platform//23.08 org.freedesktop.Sdk//23.08
-                  flatpak install --user -y flathub org.electronjs.Electron2.BaseApp//23.08
-
-            # ── Apple codesigning (macOS only) ──
-            - name: Install Apple codesigning certificate
-              id: apple_cert
-              if: matrix.os == 'macos-latest'
-              continue-on-error: true
-              env:
-                  BUILD_CERTIFICATE_BASE64: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
-                  P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
-                  KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
-              run: |
-                  if [ -z "$BUILD_CERTIFICATE_BASE64" ]; then
-                    echo "No certificate provided, will build unsigned"
-                    exit 1
-                  fi
-                  CERTIFICATE_PATH=$RUNNER_TEMP/build_certificate.p12
-                  KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
-                  echo -n "$BUILD_CERTIFICATE_BASE64" | base64 --decode > $CERTIFICATE_PATH
-                  security create-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
-                  security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
-                  security unlock-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
-                  security import $CERTIFICATE_PATH -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
-                  security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
-                  security list-keychain -d user -s $KEYCHAIN_PATH
-
-            # ── Platform packaging ──
-            - name: Package for Windows
-              id: win_build
-              if: runner.os == 'Windows'
-              continue-on-error: true
-              run: npx electron-builder --win --${{ matrix.arch }} --publish never
-
-            - name: Package for Windows (unsigned fallback)
-              if: runner.os == 'Windows' && steps.win_build.outcome == 'failure'
-              env:
-                  WIN_CSC_LINK: ''
-                  CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-              run: |
-                  rm -rf dist/
-                  npx electron-builder --win --${{ matrix.arch }} --publish never
-
-            - name: Package for macOS (signed + notarized)
-              id: mac_build
-              if: matrix.os == 'macos-latest' && steps.apple_cert.outcome == 'success'
-              continue-on-error: true
-              env:
-                  CSC_LINK: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
-                  CSC_KEY_PASSWORD: ${{ secrets.P12_PASSWORD }}
-                  APPLE_ID: ${{ secrets.APPLE_ID }}
-                  APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-                  APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-              run: npx electron-builder --mac --${{ matrix.arch }} -c.mac.notarize=true --publish never
-
-            - name: Package for macOS (unsigned fallback)
-              if: matrix.os == 'macos-latest' && (steps.apple_cert.outcome != 'success' || steps.mac_build.outcome == 'failure')
-              env:
-                  CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-              run: |
-                  rm -rf dist/
-                  npx electron-builder --mac --${{ matrix.arch }} --publish never
-
-            - name: Package for Linux
-              if: runner.os == 'Linux'
-              run: |
-                  if [ "${{ matrix.arch }}" == "arm64" ]; then
-                    # ARM64: deb + AppImage only (flatpak BaseApp not available for arm64)
-                    npx electron-builder --linux AppImage deb --${{ matrix.arch }} --publish never
-                  elif [ "${{ steps.flatpak.outcome }}" == "success" ]; then
-                    npx electron-builder --linux --${{ matrix.arch }} --publish never
-                  else
-                    echo "Flatpak not available, building without flatpak"
-                    npx electron-builder --linux AppImage deb snap --${{ matrix.arch }} --publish never
-                  fi
+            # ── Windows MSI packaging ──
+            - name: Package Windows MSI
+              run: npx electron-builder --win msi --${{ matrix.arch }} --publish never
 
             # ── Windows code signing ──
             - name: Azure Trusted Signing (Windows Only)
-              if: runner.os == 'Windows'
               continue-on-error: true
               uses: azure/trusted-signing-action@v0.5.1
               with:
@@ -176,26 +76,15 @@ jobs:
                   trusted-signing-account-name: open-webui
                   certificate-profile-name: open-webui
                   files-folder: dist
-                  files-folder-filter: exe
+                  files-folder-filter: msi
 
             # ── Upload release artifacts ──
             - name: Upload Artifacts
               uses: actions/upload-artifact@v4
               with:
-                  name: ${{ matrix.os }}-${{ matrix.arch }}
+                  name: windows-msi-${{ matrix.arch }}
                   path: |
-                      dist/*.exe
-                      dist/*.dmg
-                      dist/*.zip
-                      dist/*.pkg
-                      dist/*.deb
-                      dist/*.rpm
-                      dist/*.AppImage
-                      dist/*.snap
-                      dist/*.flatpak
-                      dist/*.tar.gz
-                      dist/*.blockmap
-                      dist/latest*.yml
+                      dist/*.msi
                   if-no-files-found: warn
 
     release:
@@ -243,82 +132,8 @@ jobs:
             - name: Download Artifacts
               uses: actions/download-artifact@v4
               with:
-                  pattern: '*-*'
+                  pattern: 'windows-msi-*'
                   merge-multiple: false
-
-            - name: Install js-yaml for manifest merging
-              run: npm install --no-save js-yaml
-
-            - name: Merge macOS latest-mac.yml (x64 + arm64)
-              run: |
-                  # Each macOS arch build produces its own latest-mac.yml with only
-                  # that arch's entry. Merge them so electron-updater works for both.
-                  X64_YML="macos-latest-x64/latest-mac.yml"
-                  ARM_YML="macos-latest-arm64/latest-mac.yml"
-
-                  if [ -f "$X64_YML" ] && [ -f "$ARM_YML" ]; then
-                    echo "Merging latest-mac.yml from both architectures"
-                    node -e "
-                      const fs = require('fs');
-                      const yaml = require('js-yaml');
-                      const x64 = yaml.load(fs.readFileSync('$X64_YML', 'utf8'));
-                      const arm = yaml.load(fs.readFileSync('$ARM_YML', 'utf8'));
-                      x64.files = [...(x64.files || []), ...(arm.files || [])];
-                      const out = yaml.dump(x64, { lineWidth: -1 });
-                      fs.writeFileSync('$X64_YML', out);
-                      console.log(out);
-                    "
-                    rm -f "$ARM_YML"
-                  else
-                    echo "Skipping merge — need both $X64_YML and $ARM_YML"
-                    ls -la macos-latest-*/latest-mac.yml 2>/dev/null || true
-                  fi
-
-            - name: Merge Linux latest-linux.yml (x64 + arm64)
-              run: |
-                  X64_YML="ubuntu-latest-x64/latest-linux.yml"
-                  ARM_YML="ubuntu-24.04-arm-arm64/latest-linux.yml"
-
-                  if [ -f "$X64_YML" ] && [ -f "$ARM_YML" ]; then
-                    echo "Merging latest-linux.yml from both architectures"
-                    node -e "
-                      const fs = require('fs');
-                      const yaml = require('js-yaml');
-                      const x64 = yaml.load(fs.readFileSync('$X64_YML', 'utf8'));
-                      const arm = yaml.load(fs.readFileSync('$ARM_YML', 'utf8'));
-                      x64.files = [...(x64.files || []), ...(arm.files || [])];
-                      const out = yaml.dump(x64, { lineWidth: -1 });
-                      fs.writeFileSync('$X64_YML', out);
-                      console.log(out);
-                    "
-                    rm -f "$ARM_YML"
-                  else
-                    echo "Skipping merge — need both $X64_YML and $ARM_YML"
-                    ls -la ubuntu-*-*/latest-linux.yml 2>/dev/null || true
-                  fi
-
-            - name: Merge Windows latest.yml (x64 + arm64)
-              run: |
-                  X64_YML="windows-latest-x64/latest.yml"
-                  ARM_YML="windows-11-arm-arm64/latest.yml"
-
-                  if [ -f "$X64_YML" ] && [ -f "$ARM_YML" ]; then
-                    echo "Merging latest.yml from both architectures"
-                    node -e "
-                      const fs = require('fs');
-                      const yaml = require('js-yaml');
-                      const x64 = yaml.load(fs.readFileSync('$X64_YML', 'utf8'));
-                      const arm = yaml.load(fs.readFileSync('$ARM_YML', 'utf8'));
-                      x64.files = [...(x64.files || []), ...(arm.files || [])];
-                      const out = yaml.dump(x64, { lineWidth: -1 });
-                      fs.writeFileSync('$X64_YML', out);
-                      console.log(out);
-                    "
-                    rm -f "$ARM_YML"
-                  else
-                    echo "Skipping merge — need both $X64_YML and $ARM_YML"
-                    ls -la windows-*-*/latest.yml 2>/dev/null || true
-                  fi
 
             - name: Create Release
               uses: softprops/action-gh-release@v2
@@ -331,18 +146,4 @@ jobs:
                   draft: false
                   prerelease: false
                   files: |
-                      windows-*-*/*.exe
-                      windows-*-*/*.blockmap
-                      windows-*-*/latest*.yml
-                      macos-latest-*/*.dmg
-                      macos-latest-*/*.zip
-                      macos-latest-*/*.pkg
-                      macos-latest-*/*.blockmap
-                      macos-latest-*/latest*.yml
-                      ubuntu-*-*/*.deb
-                      ubuntu-*-*/*.rpm
-                      ubuntu-*-*/*.AppImage
-                      ubuntu-*-*/*.snap
-                      ubuntu-*-*/*.flatpak
-                      ubuntu-*-*/*.tar.gz
-                      ubuntu-*-*/latest*.yml
+                      windows-msi-*/*.msi

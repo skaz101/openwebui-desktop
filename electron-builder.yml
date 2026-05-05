@@ -18,10 +18,13 @@ asarUnpack:
   - node_modules/node-pty/**
 win:
   executableName: open-webui
-nsis:
+  target:
+    - target: msi
+      arch:
+        - x64
+msi:
   artifactName: ${name}-${arch}-setup.${ext}
   shortcutName: ${productName}
-  uninstallDisplayName: ${productName}
   createDesktopShortcut: always
 mac:
   target:
