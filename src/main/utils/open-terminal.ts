@@ -23,6 +23,7 @@ let url: string | null = null
 let apiKey: string | null = null
 let status: string | null = null // null | starting | started | stopped | failed
 let logBuffer: string[] = []
+const MAX_LOG_CHUNKS = 5000
 
 const lock = new ServiceLock('open-terminal')
 
@@ -36,7 +37,14 @@ export const getOpenTerminalInfo = () => ({
 })
 
 export const getOpenTerminalPty = (): pty.IPty | null => ptyProcess
-export const getOpenTerminalLog = (): string[] => logBuffer
+export const getOpenTerminalLog = (): string[] => [...logBuffer]
+
+const appendLog = (data: string): void => {
+  logBuffer.push(data)
+  if (logBuffer.length > MAX_LOG_CHUNKS) {
+    logBuffer.splice(0, logBuffer.length - MAX_LOG_CHUNKS)
+  }
+}
 
 export const startOpenTerminal = async (
   port: number | null = null,
@@ -142,7 +150,7 @@ export const startOpenTerminal = async (
   status = 'starting'
 
   spawned.onData((data: string) => {
-    logBuffer.push(data)
+    appendLog(data)
     log.info(`[OpenTerminal:${spawnedPid}] ${data.replace(/[\r\n]+/g, ' ').trim()}`)
   })
 
