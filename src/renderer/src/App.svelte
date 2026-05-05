@@ -17,6 +17,8 @@
     document.documentElement.classList.add(resolved)
   }
 
+  let serverInfoInterval: ReturnType<typeof setInterval> | null = null
+
   onMount(async () => {
     const api = window?.electronAPI
     if (!api) return
@@ -52,12 +54,16 @@
     // "Get Started" (local install) which handles Python/uv as a prerequisite.
     appState.set('ready')
 
-    setInterval(async () => {
+    serverInfoInterval = setInterval(async () => {
       serverInfo.set(await api.getServerInfo())
     }, 3000)
   })
 
   onDestroy(() => {
+    if (serverInfoInterval) {
+      clearInterval(serverInfoInterval)
+      serverInfoInterval = null
+    }
     if (themeMediaQuery && themeChangeHandler) {
       themeMediaQuery.removeEventListener('change', themeChangeHandler)
     }

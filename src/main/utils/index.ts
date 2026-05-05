@@ -178,6 +178,7 @@ const generateDownloadUrl = () => {
 }
 
 export const downloadFileWithProgress = async (url, downloadPath, onProgress) => {
+  let writeStream: fs.WriteStream | null = null
   try {
     const response = await fetch(url)
     if (!response || !response.ok) {
@@ -185,24 +186,35 @@ export const downloadFileWithProgress = async (url, downloadPath, onProgress) =>
     }
     const totalSize = parseInt(response.headers.get('content-length'), 10)
     let downloadedSize = 0
-    const reader = response.body.getReader()
-    const chunks = []
+    const reader = response.body?.getReader()
+    if (!reader) {
+      throw new Error('Response body is not readable')
+    }
 
+    writeStream = fs.createWriteStream(downloadPath)
     while (true) {
       const { done, value } = await reader.read()
       if (done) break
-      chunks.push(value)
+
+      const chunk = Buffer.from(value)
+      if (!writeStream.write(chunk)) {
+        await new Promise((resolve) => writeStream!.once('drain', resolve))
+      }
       downloadedSize += value.length
       if (onProgress && totalSize) {
         onProgress((downloadedSize / totalSize) * 100, downloadedSize, totalSize)
       }
     }
 
-    const buffer = Buffer.concat(chunks.map((chunk) => Buffer.from(chunk)))
-    fs.writeFileSync(downloadPath, buffer)
+    await new Promise<void>((resolve, reject) => {
+      writeStream!.once('finish', resolve)
+      writeStream!.once('error', reject)
+      writeStream!.end()
+    })
     log.info('File downloaded successfully:', downloadPath)
     return downloadPath
   } catch (error) {
+    writeStream?.destroy()
     // Clean up partial downloads
     try {
       if (fs.existsSync(downloadPath)) {
@@ -552,9 +564,17 @@ import * as pty from 'node-pty'
 const serverPIDs: Set<number> = new Set()
 const serverLogs: Map<number, string[]> = new Map()
 let serverPtyProcesses: Map<number, pty.IPty> = new Map()
+const MAX_SERVER_LOG_CHUNKS = 5000
 
 export const getServerPIDs = (): number[] => Array.from(serverPIDs)
 export const getServerPty = (pid: number): pty.IPty | undefined => serverPtyProcesses.get(pid)
+
+const appendServerLog = (buffer: string[], data: string): void => {
+  buffer.push(data)
+  if (buffer.length > MAX_SERVER_LOG_CHUNKS) {
+    buffer.splice(0, buffer.length - MAX_SERVER_LOG_CHUNKS)
+  }
+}
 
 export const startServer = async (
   expose = false,
@@ -619,13 +639,13 @@ export const startServer = async (
   serverPtyProcesses.set(pid, ptyProcess)
 
   ptyProcess.onData((data: string) => {
-    rawBuffer.push(data)
+    appendServerLog(rawBuffer, data)
     serverLogger.info(`[PID:${pid}] ${data.replace(/[\r\n]+/g, ' ').trim()}`)
   })
 
   ptyProcess.onExit(({ exitCode, signal }) => {
     const exitMsg = `\r\n[Process exited with code ${exitCode}${signal ? ` signal ${signal}` : ''}]\r\n`
-    rawBuffer.push(exitMsg)
+    appendServerLog(rawBuffer, exitMsg)
     serverLogger.info(`[PID:${pid}] Exited code=${exitCode} signal=${signal}`)
     serverPIDs.delete(pid)
     serverPtyProcesses.delete(pid)
@@ -752,7 +772,7 @@ function sleep(ms: number): Promise<void> {
 }
 
 export function getServerLog(pid: number): string[] {
-  return serverLogs.get(pid) || []
+  return [...(serverLogs.get(pid) || [])]
 }
 
 // ─── URL Validation ─────────────────────────────────────
@@ -841,8 +861,6 @@ export interface AppConfig {
   spotlightClipboardPaste: boolean
   voiceInputShortcut: string
   voiceInputEnabled: boolean
-  callShortcut: string
-  callEnabled: boolean
   windowBounds: { x: number; y: number; width: number; height: number } | null
   windowMaximized: boolean
 }
@@ -878,8 +896,6 @@ const DEFAULT_CONFIG: AppConfig = {
   spotlightClipboardPaste: true,
   voiceInputShortcut: 'Shift+CommandOrControl+Space',
   voiceInputEnabled: true,
-  callShortcut: 'Shift+CommandOrControl+C',
-  callEnabled: true,
   windowBounds: null,
   windowMaximized: false
 }

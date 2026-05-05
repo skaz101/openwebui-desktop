@@ -224,7 +224,7 @@ function tryRegisterShortcut(
   }
 }
 
-const registerShortcuts = (globalAccel?: string, spotlightAccel?: string, voiceInputAccel?: string, callAccel?: string): void => {
+const registerShortcuts = (globalAccel?: string, spotlightAccel?: string, voiceInputAccel?: string): void => {
   globalShortcut.unregisterAll()
 
   // On Wayland / Flatpak global shortcuts are unsupported — skip silently.
@@ -266,15 +266,6 @@ const registerShortcuts = (globalAccel?: string, spotlightAccel?: string, voiceI
     })
   } else {
     log.info(`Voice input shortcut skipped — accel="${voiceInputAccel}", enabled=${CONFIG?.voiceInputEnabled}`)
-  }
-
-  // Call shortcut – open the voice/video call overlay
-  if (callAccel && CONFIG?.callEnabled !== false) {
-    tryRegisterShortcut(callAccel, 'Call', () => {
-      toggleCall()
-    })
-  } else {
-    log.info(`Call shortcut skipped — accel="${callAccel}", enabled=${CONFIG?.callEnabled}`)
   }
 }
 
@@ -539,49 +530,6 @@ async function toggleVoiceInput(): Promise<void> {
         win.webContents.send('voiceInput:state', { recording: true })
       }, 100)
     })
-  }
-}
-
-// ─── Call Shortcut ──────────────────────────────────────
-
-async function toggleCall(): Promise<void> {
-  // Pre-flight: check a connection is configured
-  try {
-    const config = await getConfig()
-    if (!config.defaultConnectionId || config.connections.length === 0) {
-      log.warn('Call: no connection configured')
-      new Notification({
-        title: 'Call',
-        body: 'No connection configured. Set up a connection in Settings before using the call shortcut.'
-      }).show()
-      return
-    }
-    const conn = config.connections.find((c) => c.id === config.defaultConnectionId)
-    if (!conn) {
-      log.warn('Call: default connection not found')
-      new Notification({
-        title: 'Call',
-        body: 'Default connection not found. Check your connection settings.'
-      }).show()
-      return
-    }
-
-    let url = conn.url
-    if (conn.type === 'local' && SERVER_URL) {
-      url = SERVER_URL
-    }
-    if (url.startsWith('http://0.0.0.0')) {
-      url = url.replace('http://0.0.0.0', 'http://localhost')
-    }
-
-    sendToRenderer('call', { connectionId: conn.id, url })
-
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.show()
-      mainWindow.focus()
-    }
-  } catch (err: any) {
-    log.warn('Call: config check failed:', err)
   }
 }
 
@@ -1382,7 +1330,7 @@ if (!gotTheLock) {
       CONFIG = await getConfig()
       updateTray()
       voiceInputRecording = false
-      registerShortcuts(CONFIG.globalShortcut, CONFIG.spotlightShortcut, CONFIG.voiceInputShortcut, CONFIG.callShortcut)
+      registerShortcuts(CONFIG.globalShortcut, CONFIG.spotlightShortcut, CONFIG.voiceInputShortcut)
     })
 
     // Python/uv
@@ -2093,7 +2041,7 @@ if (!gotTheLock) {
 
 
     // Global shortcut
-    registerShortcuts(CONFIG.globalShortcut, CONFIG.spotlightShortcut, CONFIG.voiceInputShortcut, CONFIG.callShortcut)
+    registerShortcuts(CONFIG.globalShortcut, CONFIG.spotlightShortcut, CONFIG.voiceInputShortcut)
 
     // Enable screen capture
     session.defaultSession.setDisplayMediaRequestHandler(

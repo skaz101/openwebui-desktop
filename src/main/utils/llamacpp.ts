@@ -26,9 +26,17 @@ let pid: number | null = null
 let url: string | null = null
 let status: string | null = null // null | setting-up | starting | started | stopped | failed
 let logBuffer: string[] = []
+const MAX_LOG_CHUNKS = 5000
 
 const lock = new ServiceLock('llamacpp')
 let binaryPath: string | null = null
+
+const appendLog = (data: string): void => {
+  logBuffer.push(data)
+  if (logBuffer.length > MAX_LOG_CHUNKS) {
+    logBuffer.splice(0, logBuffer.length - MAX_LOG_CHUNKS)
+  }
+}
 
 // ─── Public Getters ─────────────────────────────────────
 
@@ -67,7 +75,7 @@ export const getLlamaCppInfo = () => {
 }
 
 export const getLlamaCppPty = (): pty.IPty | null => ptyProcess
-export const getLlamaCppLog = (): string[] => logBuffer
+export const getLlamaCppLog = (): string[] => [...logBuffer]
 
 // ─── Asset Resolution ───────────────────────────────────
 
@@ -513,14 +521,14 @@ export const startLlamaCpp = async (
   pid = spawnedPid
 
   spawned.onData((data: string) => {
-    logBuffer.push(data)
+    appendLog(data)
     log.info(`[llamacpp:${spawnedPid}] ${data.replace(/[\r\n]+/g, ' ').trim()}`)
   })
 
   spawned.onExit(({ exitCode, signal }) => {
     log.info(`[llamacpp:${spawnedPid}] Exited code=${exitCode} signal=${signal}`)
     const exitMsg = `\r\n[Process exited with code ${exitCode}${signal ? ` signal ${signal}` : ''}]\r\n`
-    logBuffer.push(exitMsg)
+    appendLog(exitMsg)
     ptyProcess = null
     pid = null
     url = null
